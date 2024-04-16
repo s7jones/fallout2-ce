@@ -41,6 +41,7 @@
 #include "window_manager_private.h"
 #include "word_wrap.h"
 #include "worldmap.h"
+#include "game_controller.h"
 
 namespace fallout {
 
@@ -360,12 +361,16 @@ static void mainLoop()
     while (_game_user_wants_to_quit == 0) {
         sharedFpsLimiter.mark();
 
+
+
         int keyCode = inputGetInput();
 
         // SFALL: MainLoopHook.
         sfall_gl_scr_process_main();
 
         gameHandleKey(keyCode, false);
+
+        _gcontroller_handle_event();
 
         scriptsHandleRequests();
 

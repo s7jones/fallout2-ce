@@ -1,6 +1,7 @@
 #ifndef GAME_CONTROLLER_H
 #define GAME_CONTROLLER_H
 
+#include <SDL_events.h>
 #include <SDL_gamecontroller.h>
 
 namespace fallout {
@@ -18,7 +19,11 @@ bool controllerEngineInit();
 
 SDL_GameController* findController();
 
-void _gcontroller_handle_event(int controllerX, int controllerY, int controllerState);
+void onControllerAdded(SDL_Event event);
+
+void onControllerRemoved(SDL_Event event);
+
+void _gcontroller_handle_event();
 
 } // namespace fallout
 

@@ -7,6 +7,8 @@ namespace fallout {
 
 static int gControllerLastError;
 
+static SDL_GameController* gcontroller;
+
 int gameControllerInit()
 {
     // if (ggameControllerInitialized) {
@@ -26,8 +28,8 @@ int gameControllerInit()
         return -1;
     }
 
-    SDL_GameController* controller = findController();
-    if (controller ==  nullptr) {
+    gcontroller = findController();
+    if (gcontroller ==  nullptr) {
         debugPrint("failed!\n");
         return -1;
     }
@@ -77,8 +79,44 @@ SDL_GameController* findController()
     return nullptr;
 }
 
-void _gcontroller_handle_event(int controllerX, int controllerY, int controllerState)
+void onControllerAdded(SDL_Event event)
 {
+    if (!gcontroller) {
+        gcontroller = SDL_GameControllerOpen(event.cdevice.which);
+    }
+}
+
+void onControllerRemoved(SDL_Event event)
+{
+    if (gcontroller && event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gcontroller))) {
+        SDL_GameControllerClose(gcontroller);
+        gcontroller = findController();
+    }
+}
+
+void _gcontroller_handle_event()
+{
+
+    if (SDL_GameControllerGetButton(gcontroller, SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_X)) {
+        debugPrint("x");
+        printf("X was pressed!\n");
+    } 
+
+    if (SDL_GameControllerGetButton(gcontroller, SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_Y)) {
+        debugPrint("y");
+        printf("Y was pressed!\n");
+    } 
+
+    if (SDL_GameControllerGetButton(gcontroller, SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_A)) {
+        debugPrint("a");
+        printf("A was pressed!\n");
+    } 
+
+    if (SDL_GameControllerGetButton(gcontroller, SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_B)) {
+        debugPrint("b");
+        printf("B was pressed!\n");
+    } 
+
     //if (!gGameControllerInitialized) {
     //    return;
     //}

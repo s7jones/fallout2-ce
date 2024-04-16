@@ -491,6 +491,27 @@ void gameExit()
     sfallConfigExit();
 }
 
+int sdlEventHandle(SDL_Event event)
+{
+    switch (event.type) {
+    case SDL_CONTROLLERDEVICEADDED:
+        //if (!controller) {
+        //    controller = SDL_GameControllerOpen(event.cdevice.which);
+        //}
+        onControllerAdded(event);
+        break;
+    case SDL_CONTROLLERDEVICEREMOVED:
+        //if (controller && event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
+        //    SDL_GameControllerClose(controller);
+        //    controller = findController();
+        //}
+        onControllerRemoved(event);
+        break;
+    }
+
+    return 0;
+}
+
 // 0x442D44
 int gameHandleKey(int eventCode, bool isInCombatMode)
 {
