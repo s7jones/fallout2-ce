@@ -1,4 +1,7 @@
 #include "game_controller.h"
+#include <SDL_gamecontroller.h>
+#include "debug.h"
+#include <SDL.h>
 
 namespace fallout {
 
@@ -23,13 +26,19 @@ int gameControllerInit()
         return -1;
     }
 
+    SDL_GameController* controller = findController();
+    if (controller ==  nullptr) {
+        debugPrint("failed!\n");
+        return -1;
+    }
+
     // ggameControllerInitialized = true;
     //_gcontroller_enabled = 1;
 
     // gameControllerSetCursor(MOUSE_CURSOR_ARROW);
 
     // SFALL
-    // customMouseModeFrmsInit();
+    // customControllerModeFrmsInit();
 
     return 0;
 }
@@ -55,6 +64,54 @@ bool controllerEngineInit()
     }
 
     return true;
+}
+
+SDL_GameController* findController()
+{
+    for (int i = 0; i < SDL_NumJoysticks(); i++) {
+        if (SDL_IsGameController(i)) {
+            return SDL_GameControllerOpen(i);
+        }
+    }
+
+    return nullptr;
+}
+
+void _gcontroller_handle_event(int controllerX, int controllerY, int controllerState)
+{
+    //if (!gGameControllerInitialized) {
+    //    return;
+    //}
+
+    //if (gGameControllerCursor >= MOUSE_CURSOR_WAIT_PLANET) {
+    //    return;
+    //}
+
+    //if (!_gcontroller_enabled) {
+    //    return;
+    //}
+
+    //if (_gcontroller_clicked_on_edge) {
+    //    if (_gcontroller_get_click_to_scroll()) {
+    //        return;
+    //    }
+    //}
+
+    //if (gameControllerClickOnInterfaceBar()) {
+    //    return;
+    //}
+
+    //if ((controllerState & MOUSE_EVENT_RIGHT_BUTTON_DOWN) != 0) {
+    //    if ((controllerState & MOUSE_EVENT_RIGHT_BUTTON_REPEAT) == 0 && (gGameControllerHexCursor->flags & OBJECT_HIDDEN) == 0) {
+    //        gameControllerCycleMode();
+    //    }
+    //    return;
+    //}
+
+    //if ((controllerState & MOUSE_EVENT_LEFT_BUTTON_UP) != 0) {
+    //    if (gGameControllerMode == GAME_MOUSE_MODE_MOVE) {
+    //    }
+    //}
 }
 
 } // namespace fallout

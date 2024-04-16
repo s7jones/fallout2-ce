@@ -97,6 +97,8 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/font_manager.h"
     "src/game_config.cc"
     "src/game_config.h"
+    "src/game_controller.cc"
+    "src/game_controller.h"
     "src/game_dialog.cc"
     "src/game_dialog.h"
     "src/game_memory.cc"

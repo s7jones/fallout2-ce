@@ -1,6 +1,8 @@
 #ifndef GAME_CONTROLLER_H
 #define GAME_CONTROLLER_H
 
+#include <SDL_gamecontroller.h>
+
 namespace fallout {
 
 typedef enum ControllerError {
@@ -9,6 +11,14 @@ typedef enum ControllerError {
 };
 
 int gameControllerInit();
+
+int sdlControllerInit();
+
+bool controllerEngineInit();
+
+SDL_GameController* findController();
+
+void _gcontroller_handle_event(int controllerX, int controllerY, int controllerState);
 
 } // namespace fallout
 
