@@ -21,6 +21,7 @@
 #include "draw.h"
 #include "endgame.h"
 #include "font_manager.h"
+#include "game_controller.h"
 #include "game_dialog.h"
 #include "game_memory.h"
 #include "game_mouse.h"
@@ -245,6 +246,12 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
     }
 
     debugPrint(">gmouse_init\t");
+
+    if (gameControllerInit() != 0) {
+        debugPrint("Game controller initialization failed.\n");
+    }
+
+    debugPrint(">gcontroller_init\t");
 
     if (protoInit() != 0) {
         debugPrint("Failed on proto_init\n");
@@ -481,6 +488,27 @@ void gameExit()
     dbExit();
     settingsExit(true);
     sfallConfigExit();
+}
+
+int sdlEventHandle(SDL_Event event)
+{
+    switch (event.type) {
+    case SDL_CONTROLLERDEVICEADDED:
+        //if (!controller) {
+        //    controller = SDL_GameControllerOpen(event.cdevice.which);
+        //}
+        onControllerAdded(event);
+        break;
+    case SDL_CONTROLLERDEVICEREMOVED:
+        //if (controller && event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
+        //    SDL_GameControllerClose(controller);
+        //    controller = findController();
+        //}
+        onControllerRemoved(event);
+        break;
+    }
+
+    return 0;
 }
 
 // 0x442D44
