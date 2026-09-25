@@ -74,6 +74,14 @@ typedef enum PremadeCharacter {
     PREMADE_CHARACTER_COUNT,
 } PremadeCharacter;
 
+typedef enum CharacterSelectorFocus {
+    CHARACTER_SELECTOR_FOCUS_CHARACTER,
+    CHARACTER_SELECTOR_FOCUS_TAKE,
+    CHARACTER_SELECTOR_FOCUS_MODIFY,
+    CHARACTER_SELECTOR_FOCUS_CREATE,
+    CHARACTER_SELECTOR_FOCUS_BACK,
+} CharacterSelectorFocus;
+
 typedef struct PremadeCharacterDescription {
     char fileName[20];
     int face;
@@ -87,11 +95,16 @@ static bool characterSelectorWindowRenderFace();
 static bool characterSelectorWindowRenderStats();
 static bool characterSelectorWindowRenderBio();
 static bool characterSelectorWindowFatalError(bool result);
+static void characterSelectorWindowDrawFocus();
+static void characterSelectorWindowRestoreFocus(CharacterSelectorFocus focus);
+static void characterSelectorMoveFocus(int direction);
 
 static void premadeCharactersLocalizePath(char* path);
 
 // 0x51C84C
 static int gCurrentPremadeCharacter = PREMADE_CHARACTER_NARG;
+
+static CharacterSelectorFocus gCharacterSelectorFocus = CHARACTER_SELECTOR_FOCUS_CHARACTER;
 
 // 0x51C850
 static PremadeCharacterDescription gPremadeCharacterDescriptions[PREMADE_CHARACTER_COUNT] = {
@@ -111,6 +124,7 @@ static unsigned char* gCharacterSelectorWindowBuffer = nullptr;
 
 // 0x51C800
 static unsigned char* gCharacterSelectorBackground = nullptr;
+static unsigned char* gCharacterSelectorWindowBackground = nullptr;
 
 // 0x51C804
 static int gCharacterSelectorWindowPreviousButton = -1;
@@ -171,6 +185,26 @@ int characterSelectorOpen()
 
         int keyCode = inputGetInput();
 
+        // Controller confirm is translated to KEY_RETURN. Convert it to the
+        // legacy action associated with the focused control.
+        if (keyCode == KEY_RETURN) {
+            switch (gCharacterSelectorFocus) {
+            case CHARACTER_SELECTOR_FOCUS_CHARACTER:
+            case CHARACTER_SELECTOR_FOCUS_TAKE:
+                keyCode = KEY_UPPERCASE_T;
+                break;
+            case CHARACTER_SELECTOR_FOCUS_MODIFY:
+                keyCode = KEY_UPPERCASE_M;
+                break;
+            case CHARACTER_SELECTOR_FOCUS_CREATE:
+                keyCode = KEY_UPPERCASE_C;
+                break;
+            case CHARACTER_SELECTOR_FOCUS_BACK:
+                keyCode = KEY_ESCAPE;
+                break;
+            }
+        }
+
         switch (keyCode) {
         case KEY_MINUS:
         case KEY_UNDERSCORE:
@@ -216,9 +250,38 @@ int characterSelectorOpen()
         case KEY_F10:
             showQuitConfirmationDialog();
             break;
+        case KEY_ARROW_UP:
+            characterSelectorMoveFocus(-1);
+            break;
+        case KEY_ARROW_DOWN:
+            characterSelectorMoveFocus(1);
+            break;
         case KEY_ARROW_LEFT:
-            soundPlayFile("ib2p1xx1");
-            // FALLTHROUGH
+            if (gCharacterSelectorFocus == CHARACTER_SELECTOR_FOCUS_CHARACTER) {
+                soundPlayFile("ib2p1xx1");
+                gCurrentPremadeCharacter -= 1;
+                if (gCurrentPremadeCharacter < 0) {
+                    gCurrentPremadeCharacter = gPremadeCharacterCount - 1;
+                }
+
+                characterSelectorWindowRefresh();
+            } else {
+                characterSelectorMoveFocus(-1);
+            }
+            break;
+        case KEY_ARROW_RIGHT:
+            if (gCharacterSelectorFocus == CHARACTER_SELECTOR_FOCUS_CHARACTER) {
+                soundPlayFile("ib2p1xx1");
+                gCurrentPremadeCharacter += 1;
+                if (gCurrentPremadeCharacter >= gPremadeCharacterCount) {
+                    gCurrentPremadeCharacter = 0;
+                }
+
+                characterSelectorWindowRefresh();
+            } else {
+                characterSelectorMoveFocus(1);
+            }
+            break;
         case 500:
             gCurrentPremadeCharacter -= 1;
             if (gCurrentPremadeCharacter < 0) {
@@ -227,9 +290,6 @@ int characterSelectorOpen()
 
             characterSelectorWindowRefresh();
             break;
-        case KEY_ARROW_RIGHT:
-            soundPlayFile("ib2p1xx1");
-            // FALLTHROUGH
         case 501:
             gCurrentPremadeCharacter += 1;
             if (gCurrentPremadeCharacter >= gPremadeCharacterCount) {
@@ -252,6 +312,108 @@ int characterSelectorOpen()
     }
 
     return rc;
+}
+
+static void characterSelectorWindowGetFocusRect(CharacterSelectorFocus focus, int* left, int* top, int* right, int* bottom)
+{
+    switch (focus) {
+    case CHARACTER_SELECTOR_FOCUS_CHARACTER:
+        *left = CS_WINDOW_BACKGROUND_X - 2;
+        *top = CS_WINDOW_BACKGROUND_Y - 2;
+        *right = CS_WINDOW_BACKGROUND_X + CS_WINDOW_BACKGROUND_WIDTH + 1;
+        // Include the previous/next arrows in the character focus region.
+        *bottom = CS_WINDOW_NEXT_BUTTON_Y + 18 + 1;
+        break;
+    case CHARACTER_SELECTOR_FOCUS_TAKE:
+        *left = CS_WINDOW_TAKE_BUTTON_X - 2;
+        *top = CS_WINDOW_TAKE_BUTTON_Y - 2;
+        *right = CS_WINDOW_TAKE_BUTTON_X + 15 + 1;
+        *bottom = CS_WINDOW_TAKE_BUTTON_Y + 16 + 1;
+        break;
+    case CHARACTER_SELECTOR_FOCUS_MODIFY:
+        *left = CS_WINDOW_MODIFY_BUTTON_X - 2;
+        *top = CS_WINDOW_MODIFY_BUTTON_Y - 2;
+        *right = CS_WINDOW_MODIFY_BUTTON_X + 15 + 1;
+        *bottom = CS_WINDOW_MODIFY_BUTTON_Y + 16 + 1;
+        break;
+    case CHARACTER_SELECTOR_FOCUS_CREATE:
+        *left = CS_WINDOW_CREATE_BUTTON_X - 2;
+        *top = CS_WINDOW_CREATE_BUTTON_Y - 2;
+        *right = CS_WINDOW_CREATE_BUTTON_X + 15 + 1;
+        *bottom = CS_WINDOW_CREATE_BUTTON_Y + 16 + 1;
+        break;
+    case CHARACTER_SELECTOR_FOCUS_BACK:
+        *left = CS_WINDOW_BACK_BUTTON_X - 2;
+        *top = CS_WINDOW_BACK_BUTTON_Y - 2;
+        *right = CS_WINDOW_BACK_BUTTON_X + 15 + 1;
+        *bottom = CS_WINDOW_BACK_BUTTON_Y + 16 + 1;
+        break;
+    }
+}
+
+static void characterSelectorWindowDrawFocus()
+{
+    if (gCharacterSelectorWindow == -1) {
+        return;
+    }
+
+    int left;
+    int top;
+    int right;
+    int bottom;
+    characterSelectorWindowGetFocusRect(gCharacterSelectorFocus, &left, &top, &right, &bottom);
+    windowDrawRect(gCharacterSelectorWindow, left, top, right, bottom, _colorTable[32747]);
+}
+
+static void characterSelectorWindowRestoreFocus(CharacterSelectorFocus focus)
+{
+    if (gCharacterSelectorWindow == -1 || gCharacterSelectorWindowBackground == nullptr) {
+        return;
+    }
+
+    int left;
+    int top;
+    int right;
+    int bottom;
+    characterSelectorWindowGetFocusRect(focus, &left, &top, &right, &bottom);
+
+    int width = right - left + 1;
+    int height = bottom - top + 1;
+    blitBufferToBuffer(gCharacterSelectorWindowBackground + CS_WINDOW_WIDTH * top + left,
+        width,
+        height,
+        CS_WINDOW_WIDTH,
+        gCharacterSelectorWindowBuffer + CS_WINDOW_WIDTH * top + left,
+        CS_WINDOW_WIDTH);
+}
+
+static void characterSelectorMoveFocus(int direction)
+{
+    int focus = static_cast<int>(gCharacterSelectorFocus) + direction;
+    if (focus < CHARACTER_SELECTOR_FOCUS_CHARACTER) {
+        focus = CHARACTER_SELECTOR_FOCUS_CHARACTER;
+    } else if (focus > CHARACTER_SELECTOR_FOCUS_BACK) {
+        focus = CHARACTER_SELECTOR_FOCUS_BACK;
+    }
+
+    if (focus == gCharacterSelectorFocus) {
+        return;
+    }
+
+    CharacterSelectorFocus previousFocus = gCharacterSelectorFocus;
+    gCharacterSelectorFocus = static_cast<CharacterSelectorFocus>(focus);
+    characterSelectorWindowRestoreFocus(previousFocus);
+    soundPlayFile("nmselec0");
+
+    // Restoring the character focus rectangle also restores the background
+    // underneath the face, stats, and biography. Re-render that panel before
+    // drawing the new focus state.
+    if (previousFocus == CHARACTER_SELECTOR_FOCUS_CHARACTER) {
+        characterSelectorWindowRefresh();
+    } else {
+        characterSelectorWindowDrawFocus();
+        windowRefresh(gCharacterSelectorWindow);
+    }
 }
 
 // 0x4A7468
@@ -279,7 +441,19 @@ static bool characterSelectorWindowInit()
         return characterSelectorWindowFatalError(false);
     }
 
+    gCharacterSelectorWindowBackground = (unsigned char*)internal_malloc(CS_WINDOW_WIDTH * CS_WINDOW_HEIGHT);
+    if (gCharacterSelectorWindowBackground == nullptr) {
+        return characterSelectorWindowFatalError(false);
+    }
+
     blitBufferToBuffer(backgroundFrmImage.getData(),
+        CS_WINDOW_WIDTH,
+        CS_WINDOW_HEIGHT,
+        CS_WINDOW_WIDTH,
+        gCharacterSelectorWindowBackground,
+        CS_WINDOW_WIDTH);
+
+    blitBufferToBuffer(gCharacterSelectorWindowBackground,
         CS_WINDOW_WIDTH,
         CS_WINDOW_HEIGHT,
         CS_WINDOW_WIDTH,
@@ -481,6 +655,7 @@ static bool characterSelectorWindowInit()
     buttonSetCallbacks(gCharacterSelectorWindowBackButton, _gsound_red_butt_press, _gsound_red_butt_release);
 
     gCurrentPremadeCharacter = PREMADE_CHARACTER_NARG;
+    gCharacterSelectorFocus = CHARACTER_SELECTOR_FOCUS_CHARACTER;
 
     windowRefresh(gCharacterSelectorWindow);
 
@@ -551,6 +726,11 @@ static void characterSelectorWindowFree()
         gCharacterSelectorBackground = nullptr;
     }
 
+    if (gCharacterSelectorWindowBackground != nullptr) {
+        internal_free(gCharacterSelectorWindowBackground);
+        gCharacterSelectorWindowBackground = nullptr;
+    }
+
     windowDestroy(gCharacterSelectorWindow);
     gCharacterSelectorWindow = -1;
 }
@@ -581,6 +761,7 @@ static bool characterSelectorWindowRefresh()
         }
     }
 
+    characterSelectorWindowDrawFocus();
     windowRefresh(gCharacterSelectorWindow);
 
     return success;

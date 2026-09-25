@@ -111,6 +111,17 @@ typedef enum EditorFolder {
     EDITOR_FOLDER_KILLS,
 } EditorFolder;
 
+typedef enum CharacterEditorControllerPanel {
+    CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY,
+    CHARACTER_EDITOR_CONTROLLER_PANEL_STATS,
+    CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS,
+    CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS,
+    CHARACTER_EDITOR_CONTROLLER_PANEL_CANCEL,
+    CHARACTER_EDITOR_CONTROLLER_PANEL_DONE,
+    CHARACTER_EDITOR_CONTROLLER_PANEL_OPTIONS,
+    CHARACTER_EDITOR_CONTROLLER_PANEL_COUNT,
+} CharacterEditorControllerPanel;
+
 enum {
     EDITOR_DERIVED_STAT_ARMOR_CLASS,
     EDITOR_DERIVED_STAT_ACTION_POINTS,
@@ -237,6 +248,11 @@ static void characterEditorDrawPerksFolder();
 static int characterEditorKillsCompare(const void* a1, const void* a2);
 static int characterEditorDrawKillsFolder();
 static void characterEditorDrawBigNumber(int x, int y, int flags, int value, int previousValue, int windowHandle);
+static bool characterEditorHandleControllerLayer(int keyCode);
+static void characterEditorRefreshControllerFocus();
+static void characterEditorRefreshControllerVisual();
+static void characterEditorClearControllerFocus();
+static void characterEditorDrawControllerFocus();
 static void characterEditorDrawPcStats();
 static void characterEditorDrawPrimaryStat(int stat, bool animate, int previousValue);
 static void characterEditorDrawGender();
@@ -663,6 +679,12 @@ static unsigned char* gCharacterEditorWindowBuffer;
 
 // 0x57060C
 static int gCharacterEditorWindow;
+static int gCharacterEditorNameButton = -1;
+static int gCharacterEditorAgeButton = -1;
+static int gCharacterEditorGenderButton = -1;
+static int gCharacterEditorCancelButton = -1;
+static int gCharacterEditorDoneButton = -1;
+static int gCharacterEditorOptionsButton = -1;
 
 // + stats buttons
 //
@@ -745,6 +767,16 @@ static int gCharacterEditorCardFrmId;
 // 0x5709D0
 static bool gCharacterEditorIsCreationMode;
 
+static CharacterEditorControllerPanel gCharacterEditorControllerPanel = CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY;
+static bool gCharacterEditorControllerInsidePanel = false;
+static int gCharacterEditorControllerIdentityField = 0;
+static unsigned char* gCharacterEditorControllerFocusBuffer = nullptr;
+static bool gCharacterEditorControllerFocusVisible = false;
+static int gCharacterEditorControllerFocusLeft;
+static int gCharacterEditorControllerFocusTop;
+static int gCharacterEditorControllerFocusRight;
+static int gCharacterEditorControllerFocusBottom;
+
 // 0x5709D4
 static int gCharacterEditorTaggedSkillsBackup[NUM_TAGGED_SKILLS];
 
@@ -800,12 +832,20 @@ int characterEditorShow(bool isCreationMode)
     const char* lines[] = { line2 };
 
     gCharacterEditorIsCreationMode = isCreationMode;
+    gCharacterEditorControllerPanel = CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY;
+    gCharacterEditorControllerInsidePanel = false;
+    gCharacterEditorControllerIdentityField = 0;
 
     characterEditorSavePlayer();
 
     if (characterEditorWindowInit() == -1) {
         debugPrint("\n ** Error loading character editor data! **\n");
         return -1;
+    }
+
+    if (gCharacterEditorIsCreationMode) {
+        gCharacterEditorControllerFocusBuffer = (unsigned char*)internal_malloc(EDITOR_WINDOW_WIDTH * EDITOR_WINDOW_HEIGHT);
+        characterEditorRefreshControllerFocus();
     }
 
     if (!gCharacterEditorIsCreationMode) {
@@ -829,6 +869,13 @@ int characterEditorShow(bool isCreationMode)
         convertMouseWheelToArrowKey(&keyCode);
 
         bool done = false;
+        if (gCharacterEditorIsCreationMode && characterEditorHandleControllerLayer(keyCode)) {
+            // Controller panel navigation consumed this input.
+            renderPresent();
+            sharedFpsLimiter.throttle();
+            continue;
+        }
+
         if (keyCode == 500) {
             done = true;
         }
@@ -1199,6 +1246,335 @@ int characterEditorShow(bool isCreationMode)
     return rc;
 }
 
+static void characterEditorGetControllerFocusRect(CharacterEditorControllerPanel panel, int* left, int* top, int* right, int* bottom)
+{
+    switch (panel) {
+    case CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY:
+        *left = 6;
+        *top = 1;
+        *right = 340;
+        *bottom = 24;
+        break;
+    case CHARACTER_EDITOR_CONTROLLER_PANEL_STATS:
+        *left = 16;
+        *top = 35;
+        *right = 315;
+        *bottom = 312;
+        break;
+    case CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS:
+        *left = 366;
+        *top = 2;
+        *right = 638;
+        *bottom = 258;
+        break;
+    case CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS:
+        *left = 45;
+        *top = 350;
+        *right = 295;
+        *bottom = 456;
+        break;
+    case CHARACTER_EDITOR_CONTROLLER_PANEL_DONE:
+        *left = 450;
+        *top = 447;
+        *right = 590;
+        *bottom = 479;
+        break;
+    case CHARACTER_EDITOR_CONTROLLER_PANEL_OPTIONS:
+        *left = 338;
+        *top = 447;
+        *right = 431;
+        *bottom = 479;
+        break;
+    default:
+        *left = 0;
+        *top = 0;
+        *right = 0;
+        *bottom = 0;
+        break;
+    }
+}
+
+static void characterEditorClearControllerFocus()
+{
+    if (!gCharacterEditorControllerFocusVisible || gCharacterEditorControllerFocusBuffer == nullptr) {
+        return;
+    }
+
+    int width = gCharacterEditorControllerFocusRight - gCharacterEditorControllerFocusLeft + 1;
+    int height = gCharacterEditorControllerFocusBottom - gCharacterEditorControllerFocusTop + 1;
+    blitBufferToBuffer(gCharacterEditorControllerFocusBuffer
+            + EDITOR_WINDOW_WIDTH * gCharacterEditorControllerFocusTop
+            + gCharacterEditorControllerFocusLeft,
+        width,
+        height,
+        EDITOR_WINDOW_WIDTH,
+        gCharacterEditorWindowBuffer
+            + EDITOR_WINDOW_WIDTH * gCharacterEditorControllerFocusTop
+            + gCharacterEditorControllerFocusLeft,
+        EDITOR_WINDOW_WIDTH);
+
+    gCharacterEditorControllerFocusVisible = false;
+}
+
+static void characterEditorDrawControllerFocus()
+{
+    if (gCharacterEditorControllerFocusBuffer == nullptr || gCharacterEditorControllerInsidePanel) {
+        return;
+    }
+
+    characterEditorGetControllerFocusRect(gCharacterEditorControllerPanel,
+        &gCharacterEditorControllerFocusLeft,
+        &gCharacterEditorControllerFocusTop,
+        &gCharacterEditorControllerFocusRight,
+        &gCharacterEditorControllerFocusBottom);
+
+    int width = gCharacterEditorControllerFocusRight - gCharacterEditorControllerFocusLeft + 1;
+    int height = gCharacterEditorControllerFocusBottom - gCharacterEditorControllerFocusTop + 1;
+    blitBufferToBuffer(gCharacterEditorWindowBuffer
+            + EDITOR_WINDOW_WIDTH * gCharacterEditorControllerFocusTop
+            + gCharacterEditorControllerFocusLeft,
+        width,
+        height,
+        EDITOR_WINDOW_WIDTH,
+        gCharacterEditorControllerFocusBuffer
+            + EDITOR_WINDOW_WIDTH * gCharacterEditorControllerFocusTop
+            + gCharacterEditorControllerFocusLeft,
+        EDITOR_WINDOW_WIDTH);
+
+    windowDrawRect(gCharacterEditorWindow,
+        gCharacterEditorControllerFocusLeft,
+        gCharacterEditorControllerFocusTop,
+        gCharacterEditorControllerFocusRight,
+        gCharacterEditorControllerFocusBottom,
+        _colorTable[32747]);
+    gCharacterEditorControllerFocusVisible = true;
+}
+
+static void characterEditorRefreshControllerVisual()
+{
+    if (gCharacterEditorNameButton != -1) {
+        bool focused = gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY
+            && gCharacterEditorControllerIdentityField == 0;
+        _win_register_button_image(gCharacterEditorNameButton,
+            focused ? gCharacterEditorFrmCopy[EDITOR_GRAPHIC_NAME_ON] : gCharacterEditorFrmCopy[EDITOR_GRAPHIC_NAME_OFF],
+            gCharacterEditorFrmCopy[EDITOR_GRAPHIC_NAME_ON],
+            nullptr,
+            true);
+    }
+
+    if (gCharacterEditorAgeButton != -1) {
+        bool focused = gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY
+            && gCharacterEditorControllerIdentityField == 1;
+        _win_register_button_image(gCharacterEditorAgeButton,
+            focused ? gCharacterEditorFrmCopy[EDITOR_GRAPHIC_AGE_ON] : gCharacterEditorFrmCopy[EDITOR_GRAPHIC_AGE_OFF],
+            gCharacterEditorFrmCopy[EDITOR_GRAPHIC_AGE_ON],
+            nullptr,
+            true);
+    }
+
+    if (gCharacterEditorGenderButton != -1) {
+        bool focused = gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY
+            && gCharacterEditorControllerIdentityField == 2;
+        _win_register_button_image(gCharacterEditorGenderButton,
+            focused ? gCharacterEditorFrmCopy[EDITOR_GRAPHIC_SEX_ON] : gCharacterEditorFrmCopy[EDITOR_GRAPHIC_SEX_OFF],
+            gCharacterEditorFrmCopy[EDITOR_GRAPHIC_SEX_ON],
+            nullptr,
+            true);
+    }
+
+    if (gCharacterEditorDoneButton != -1) {
+        bool focused = gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_DONE;
+        _win_register_button_image(gCharacterEditorDoneButton,
+            focused ? _editorFrmImages[24].getData() : _editorFrmImages[23].getData(),
+            _editorFrmImages[24].getData(),
+            nullptr,
+            true);
+    }
+
+    if (gCharacterEditorOptionsButton != -1) {
+        bool focused = gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_OPTIONS;
+        _win_register_button_image(gCharacterEditorOptionsButton,
+            focused ? _editorFrmImages[EDITOR_GRAPHIC_LILTTLE_RED_BUTTON_DOWN].getData() : _editorFrmImages[EDITOR_GRAPHIC_LITTLE_RED_BUTTON_UP].getData(),
+            _editorFrmImages[EDITOR_GRAPHIC_LILTTLE_RED_BUTTON_DOWN].getData(),
+            nullptr,
+            true);
+    }
+}
+
+static void characterEditorRefreshControllerFocus()
+{
+    characterEditorClearControllerFocus();
+    characterEditorDrawPrimaryStat(RENDER_ALL_STATS, 0, 0);
+    characterEditorDrawOptionalTraits();
+    characterEditorDrawSkills(0);
+    characterEditorDrawDerivedStats();
+    characterEditorDrawCard();
+    characterEditorRefreshControllerVisual();
+    characterEditorDrawControllerFocus();
+    windowRefresh(gCharacterEditorWindow);
+}
+
+static bool characterEditorHandleControllerLayer(int keyCode)
+{
+    if (gCharacterEditorControllerInsidePanel) {
+        if (keyCode == KEY_ESCAPE) {
+            gCharacterEditorControllerInsidePanel = false;
+            characterEditorRefreshControllerFocus();
+            return true;
+        }
+
+        if (gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY) {
+            if (keyCode == KEY_ARROW_UP || keyCode == KEY_ARROW_DOWN) {
+                gCharacterEditorControllerIdentityField += keyCode == KEY_ARROW_DOWN ? 1 : -1;
+                if (gCharacterEditorControllerIdentityField < 0) {
+                    gCharacterEditorControllerIdentityField = 2;
+                } else if (gCharacterEditorControllerIdentityField > 2) {
+                    gCharacterEditorControllerIdentityField = 0;
+                }
+                soundPlayFile("nmselec0");
+                characterEditorRefreshControllerFocus();
+                return true;
+            }
+
+            if (keyCode == KEY_RETURN) {
+                switch (gCharacterEditorControllerIdentityField) {
+                case 0:
+                    characterEditorEditName();
+                    break;
+                case 1:
+                    characterEditorEditAge();
+                    break;
+                case 2:
+                    characterEditorEditGender();
+                    break;
+                }
+                characterEditorRefreshControllerFocus();
+                return true;
+            }
+
+            return false;
+        }
+
+        if (keyCode == KEY_RETURN) {
+            if (gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS
+                && characterEditorSelectedItem >= EDITOR_FIRST_SKILL
+                && characterEditorSelectedItem < EDITOR_FIRST_SKILL + SKILL_COUNT) {
+                characterEditorToggleTaggedSkill(characterEditorSelectedItem - EDITOR_FIRST_SKILL);
+                characterEditorRefreshControllerFocus();
+            } else if (gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS
+                && characterEditorSelectedItem >= EDITOR_FIRST_TRAIT
+                && characterEditorSelectedItem < EDITOR_FIRST_TRAIT + TRAIT_COUNT) {
+                characterEditorToggleOptionalTrait(characterEditorSelectedItem - EDITOR_FIRST_TRAIT);
+                characterEditorRefreshControllerFocus();
+            }
+
+            return true;
+        }
+
+        // Let the existing editor navigation handle arrows and stat/skill
+        // adjustments while inside a panel.
+        return false;
+    }
+
+    if (keyCode == KEY_ARROW_LEFT || keyCode == KEY_ARROW_UP || keyCode == KEY_ARROW_RIGHT || keyCode == KEY_ARROW_DOWN) {
+        CharacterEditorControllerPanel next = gCharacterEditorControllerPanel;
+
+        switch (gCharacterEditorControllerPanel) {
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY:
+            if (keyCode == KEY_ARROW_LEFT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_STATS;
+            else if (keyCode == KEY_ARROW_RIGHT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS;
+            else if (keyCode == KEY_ARROW_DOWN) next = CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_STATS:
+            if (keyCode == KEY_ARROW_UP) next = CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY;
+            else if (keyCode == KEY_ARROW_RIGHT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS;
+            else if (keyCode == KEY_ARROW_DOWN) next = CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS:
+            if (keyCode == KEY_ARROW_UP) next = CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY;
+            else if (keyCode == KEY_ARROW_LEFT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_STATS;
+            else if (keyCode == KEY_ARROW_DOWN) next = CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS:
+            if (keyCode == KEY_ARROW_UP) next = CHARACTER_EDITOR_CONTROLLER_PANEL_STATS;
+            else if (keyCode == KEY_ARROW_LEFT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_STATS;
+            else if (keyCode == KEY_ARROW_RIGHT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS;
+            else if (keyCode == KEY_ARROW_DOWN) next = CHARACTER_EDITOR_CONTROLLER_PANEL_DONE;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_DONE:
+            if (keyCode == KEY_ARROW_UP) next = CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS;
+            else if (keyCode == KEY_ARROW_LEFT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_OPTIONS;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_OPTIONS:
+            if (keyCode == KEY_ARROW_RIGHT) next = CHARACTER_EDITOR_CONTROLLER_PANEL_DONE;
+            else if (keyCode == KEY_ARROW_UP) next = CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS;
+            break;
+        default:
+            break;
+        }
+
+        if (next != gCharacterEditorControllerPanel) {
+            gCharacterEditorControllerPanel = next;
+            switch (next) {
+            case CHARACTER_EDITOR_CONTROLLER_PANEL_STATS:
+                characterEditorSelectedItem = EDITOR_FIRST_PRIMARY_STAT;
+                break;
+            case CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS:
+                characterEditorSelectedItem = EDITOR_FIRST_SKILL;
+                break;
+            case CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS:
+                characterEditorSelectedItem = EDITOR_FIRST_TRAIT;
+                break;
+            case CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY:
+                gCharacterEditorControllerIdentityField = 0;
+                characterEditorSelectedItem = -1;
+                break;
+            default:
+                break;
+            }
+            soundPlayFile("nmselec0");
+            characterEditorRefreshControllerFocus();
+        }
+        return true;
+    }
+
+    if (keyCode == KEY_RETURN) {
+        if (gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_DONE) {
+            return false;
+        }
+
+        if (gCharacterEditorControllerPanel == CHARACTER_EDITOR_CONTROLLER_PANEL_OPTIONS) {
+            characterEditorShowOptions();
+            characterEditorRefreshControllerFocus();
+            return true;
+        }
+
+        gCharacterEditorControllerInsidePanel = true;
+        switch (gCharacterEditorControllerPanel) {
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_IDENTITY:
+            characterEditorSelectedItem = -1;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_STATS:
+            characterEditorSelectedItem = EDITOR_FIRST_PRIMARY_STAT;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_SKILLS:
+            characterEditorSelectedItem = EDITOR_FIRST_SKILL;
+            break;
+        case CHARACTER_EDITOR_CONTROLLER_PANEL_TRAITS:
+            characterEditorSelectedItem = EDITOR_FIRST_TRAIT;
+            break;
+        default:
+            break;
+        }
+
+        soundPlayFile("ib1p1xx1");
+        characterEditorRefreshControllerFocus();
+        return true;
+    }
+
+    return false;
+}
+
 // 0x4329EC
 static int characterEditorWindowInit()
 {
@@ -1565,7 +1941,7 @@ static int characterEditorWindowInit()
 
     if (gCharacterEditorIsCreationMode) {
         x = NAME_BUTTON_X;
-        btn = buttonCreate(
+        gCharacterEditorNameButton = buttonCreate(
             gCharacterEditorWindow,
             x,
             NAME_BUTTON_Y,
@@ -1579,13 +1955,13 @@ static int characterEditorWindowInit()
             gCharacterEditorFrmCopy[EDITOR_GRAPHIC_NAME_ON],
             nullptr,
             32);
-        if (btn != -1) {
-            buttonSetMask(btn, _editorFrmImages[EDITOR_GRAPHIC_NAME_MASK].getData());
-            buttonSetCallbacks(btn, _gsound_lrg_butt_press, nullptr);
+        if (gCharacterEditorNameButton != -1) {
+            buttonSetMask(gCharacterEditorNameButton, _editorFrmImages[EDITOR_GRAPHIC_NAME_MASK].getData());
+            buttonSetCallbacks(gCharacterEditorNameButton, _gsound_lrg_butt_press, nullptr);
         }
 
         x += _editorFrmImages[EDITOR_GRAPHIC_NAME_ON].getWidth();
-        btn = buttonCreate(
+        gCharacterEditorAgeButton = buttonCreate(
             gCharacterEditorWindow,
             x,
             NAME_BUTTON_Y,
@@ -1599,13 +1975,13 @@ static int characterEditorWindowInit()
             gCharacterEditorFrmCopy[EDITOR_GRAPHIC_AGE_ON],
             nullptr,
             32);
-        if (btn != -1) {
-            buttonSetMask(btn, _editorFrmImages[EDITOR_GRAPHIC_AGE_MASK].getData());
-            buttonSetCallbacks(btn, _gsound_lrg_butt_press, nullptr);
+        if (gCharacterEditorAgeButton != -1) {
+            buttonSetMask(gCharacterEditorAgeButton, _editorFrmImages[EDITOR_GRAPHIC_AGE_MASK].getData());
+            buttonSetCallbacks(gCharacterEditorAgeButton, _gsound_lrg_butt_press, nullptr);
         }
 
         x += _editorFrmImages[EDITOR_GRAPHIC_AGE_ON].getWidth();
-        btn = buttonCreate(
+        gCharacterEditorGenderButton = buttonCreate(
             gCharacterEditorWindow,
             x,
             NAME_BUTTON_Y,
@@ -1619,9 +1995,9 @@ static int characterEditorWindowInit()
             gCharacterEditorFrmCopy[EDITOR_GRAPHIC_SEX_ON],
             nullptr,
             32);
-        if (btn != -1) {
-            buttonSetMask(btn, _editorFrmImages[EDITOR_GRAPHIC_SEX_MASK].getData());
-            buttonSetCallbacks(btn, _gsound_lrg_butt_press, nullptr);
+        if (gCharacterEditorGenderButton != -1) {
+            buttonSetMask(gCharacterEditorGenderButton, _editorFrmImages[EDITOR_GRAPHIC_SEX_MASK].getData());
+            buttonSetCallbacks(gCharacterEditorGenderButton, _gsound_lrg_butt_press, nullptr);
         }
 
         y = TAG_SKILLS_BUTTON_Y;
@@ -1767,7 +2143,7 @@ static int characterEditorWindowInit()
     characterEditorRegisterInfoAreas();
     soundContinueAll();
 
-    btn = buttonCreate(
+    gCharacterEditorOptionsButton = buttonCreate(
         gCharacterEditorWindow,
         343,
         454,
@@ -1781,11 +2157,11 @@ static int characterEditorWindowInit()
         _editorFrmImages[EDITOR_GRAPHIC_LILTTLE_RED_BUTTON_DOWN].getData(),
         nullptr,
         BUTTON_FLAG_TRANSPARENT);
-    if (btn != -1) {
-        buttonSetCallbacks(btn, _gsound_red_butt_press, _gsound_red_butt_release);
+    if (gCharacterEditorOptionsButton != -1) {
+        buttonSetCallbacks(gCharacterEditorOptionsButton, _gsound_red_butt_press, _gsound_red_butt_release);
     }
 
-    btn = buttonCreate(
+    gCharacterEditorCancelButton = buttonCreate(
         gCharacterEditorWindow,
         552,
         454,
@@ -1799,11 +2175,11 @@ static int characterEditorWindowInit()
         _editorFrmImages[EDITOR_GRAPHIC_LILTTLE_RED_BUTTON_DOWN].getData(),
         nullptr,
         BUTTON_FLAG_TRANSPARENT);
-    if (btn != -1) {
-        buttonSetCallbacks(btn, _gsound_red_butt_press, _gsound_red_butt_release);
+    if (gCharacterEditorCancelButton != -1) {
+        buttonSetCallbacks(gCharacterEditorCancelButton, _gsound_red_butt_press, _gsound_red_butt_release);
     }
 
-    btn = buttonCreate(
+    gCharacterEditorDoneButton = buttonCreate(
         gCharacterEditorWindow,
         455,
         454,
@@ -1817,8 +2193,8 @@ static int characterEditorWindowInit()
         _editorFrmImages[24].getData(),
         nullptr,
         BUTTON_FLAG_TRANSPARENT);
-    if (btn != -1) {
-        buttonSetCallbacks(btn, _gsound_red_butt_press, _gsound_red_butt_release);
+    if (gCharacterEditorDoneButton != -1) {
+        buttonSetCallbacks(gCharacterEditorDoneButton, _gsound_red_butt_press, _gsound_red_butt_release);
     }
 
     windowRefresh(gCharacterEditorWindow);
@@ -1840,7 +2216,19 @@ static void characterEditorWindowFree()
         gCharacterEditorFolderViewScrollUpBtn = -1;
     }
 
+    characterEditorClearControllerFocus();
+    if (gCharacterEditorControllerFocusBuffer != nullptr) {
+        internal_free(gCharacterEditorControllerFocusBuffer);
+        gCharacterEditorControllerFocusBuffer = nullptr;
+    }
+
     windowDestroy(gCharacterEditorWindow);
+    gCharacterEditorNameButton = -1;
+    gCharacterEditorAgeButton = -1;
+    gCharacterEditorGenderButton = -1;
+    gCharacterEditorOptionsButton = -1;
+    gCharacterEditorCancelButton = -1;
+    gCharacterEditorDoneButton = -1;
 
     for (int index = 0; index < EDITOR_GRAPHIC_COUNT; index++) {
         _editorFrmImages[index].unlock();

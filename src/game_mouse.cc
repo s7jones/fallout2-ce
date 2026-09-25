@@ -1418,6 +1418,14 @@ int gameMouseGetMode()
     return gGameMouseMode;
 }
 
+void gameMouseSetCursorPosition(int x, int y)
+{
+    Rect rect;
+    if (_gmouse_3d_move_to(x, y, gElevation, &rect) == 0) {
+        windowRefreshAll(&rect);
+    }
+}
+
 // 0x44CB74
 void gameMouseCycleMode()
 {

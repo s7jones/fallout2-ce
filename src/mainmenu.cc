@@ -74,12 +74,61 @@ static const int _return_values[MAIN_MENU_BUTTON_COUNT] = {
 // 0x614840
 static int gMainMenuButtons[MAIN_MENU_BUTTON_COUNT];
 
-// 0x614858
-static bool gMainMenuWindowHidden;
-
 static FrmImage _mainMenuBackgroundFrmImage;
 static FrmImage _mainMenuButtonNormalFrmImage;
 static FrmImage _mainMenuButtonPressedFrmImage;
+
+// The item used when navigating the menu with a controller or keyboard.
+static int gMainMenuFocusedButton = 0;
+
+static void mainMenuSetFocusedButton(int buttonIndex)
+{
+    if (buttonIndex < 0 || buttonIndex >= MAIN_MENU_BUTTON_COUNT) {
+        return;
+    }
+
+    gMainMenuFocusedButton = buttonIndex;
+
+    for (int index = 0; index < MAIN_MENU_BUTTON_COUNT; index++) {
+        if (gMainMenuButtons[index] == -1) {
+            continue;
+        }
+
+        // The pressed artwork provides a visible focus indicator. This does
+        // not activate the button; it only changes its visual state.
+        if (index == gMainMenuFocusedButton) {
+            _win_register_button_image(gMainMenuButtons[index],
+                _mainMenuButtonPressedFrmImage.getData(),
+                _mainMenuButtonPressedFrmImage.getData(),
+                nullptr,
+                true);
+        } else {
+            _win_register_button_image(gMainMenuButtons[index],
+                _mainMenuButtonNormalFrmImage.getData(),
+                _mainMenuButtonPressedFrmImage.getData(),
+                nullptr,
+                true);
+        }
+    }
+
+    windowRefresh(gMainMenuWindow);
+}
+
+static void mainMenuMoveFocus(int direction)
+{
+    int buttonIndex = gMainMenuFocusedButton + direction;
+    if (buttonIndex < 0) {
+        buttonIndex = MAIN_MENU_BUTTON_COUNT - 1;
+    } else if (buttonIndex >= MAIN_MENU_BUTTON_COUNT) {
+        buttonIndex = 0;
+    }
+
+    mainMenuSetFocusedButton(buttonIndex);
+    main_menu_play_sound("nmselec0");
+}
+
+// 0x614858
+static bool gMainMenuWindowHidden;
 
 // 0x481650
 int mainMenuWindowInit()
@@ -218,6 +267,9 @@ int mainMenuWindowInit()
 
     fontSetCurrent(oldFont);
 
+    gMainMenuFocusedButton = 0;
+    mainMenuSetFocusedButton(gMainMenuFocusedButton);
+
     gMainMenuWindowInitialized = true;
     gMainMenuWindowHidden = true;
 
@@ -316,18 +368,33 @@ int mainMenuWindowHandleEvents()
 
         int keyCode = inputGetInput();
 
-        for (int buttonIndex = 0; buttonIndex < MAIN_MENU_BUTTON_COUNT; buttonIndex++) {
-            if (keyCode == gMainMenuButtonKeyBindings[buttonIndex] || keyCode == toupper(gMainMenuButtonKeyBindings[buttonIndex])) {
-                // NOTE: Uninline.
-                main_menu_play_sound("nmselec1");
+        // The main menu is a vertical list, so both vertical and horizontal
+        // arrow keys provide predictable navigation.
+        if (keyCode == KEY_ARROW_UP || keyCode == KEY_ARROW_LEFT) {
+            mainMenuMoveFocus(-1);
+            keyCode = -1;
+        } else if (keyCode == KEY_ARROW_DOWN || keyCode == KEY_ARROW_RIGHT) {
+            mainMenuMoveFocus(1);
+            keyCode = -1;
+        } else if (keyCode == KEY_RETURN) {
+            // Controller Cross (SDL A) is translated to KEY_RETURN by the
+            // controller input layer. Keyboard Enter uses the same path.
+            main_menu_play_sound("nmselec1");
+            rc = _return_values[gMainMenuFocusedButton];
+        } else {
+            for (int buttonIndex = 0; buttonIndex < MAIN_MENU_BUTTON_COUNT; buttonIndex++) {
+                if (keyCode == gMainMenuButtonKeyBindings[buttonIndex] || keyCode == toupper(gMainMenuButtonKeyBindings[buttonIndex])) {
+                    // NOTE: Uninline.
+                    main_menu_play_sound("nmselec1");
 
-                rc = _return_values[buttonIndex];
+                    rc = _return_values[buttonIndex];
 
-                if (buttonIndex == MAIN_MENU_BUTTON_CREDITS && (gPressedPhysicalKeys[SDL_SCANCODE_RSHIFT] != KEY_STATE_UP || gPressedPhysicalKeys[SDL_SCANCODE_LSHIFT] != KEY_STATE_UP)) {
-                    rc = MAIN_MENU_QUOTES;
+                    if (buttonIndex == MAIN_MENU_BUTTON_CREDITS && (gPressedPhysicalKeys[SDL_SCANCODE_RSHIFT] != KEY_STATE_UP || gPressedPhysicalKeys[SDL_SCANCODE_LSHIFT] != KEY_STATE_UP)) {
+                        rc = MAIN_MENU_QUOTES;
+                    }
+
+                    break;
                 }
-
-                break;
             }
         }
 
@@ -351,7 +418,20 @@ int mainMenuWindowHandleEvents()
             }
         }
 
-        if (keyCode == KEY_ESCAPE || _game_user_wants_to_quit == 3) {
+        if (keyCode == KEY_ESCAPE) {
+            // Do not leave the main menu immediately when Circle/B/Escape is
+            // pressed. Reuse the standard confirmation dialog so controller
+            // input cannot accidentally quit the game.
+            if (showQuitConfirmationDialog() != 0) {
+                rc = MAIN_MENU_EXIT;
+
+                // NOTE: Uninline.
+                main_menu_play_sound("nmselec1");
+                break;
+            }
+
+            _game_user_wants_to_quit = 0;
+        } else if (_game_user_wants_to_quit == 3) {
             rc = MAIN_MENU_EXIT;
 
             // NOTE: Uninline.

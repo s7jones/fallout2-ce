@@ -6,6 +6,9 @@
 
 namespace fallout {
 
+constexpr int CONTROLLER_INPUT_COMBAT_MENU = -30;
+constexpr int CONTROLLER_INPUT_COMBAT_CONFIRM = -31;
+
 typedef enum ControllerError {
     CONTROLLER_NO_ERROR = 0,
     CONTROLLER_SOS_DRIVER_NOT_LOADED = 1,
@@ -22,6 +25,12 @@ SDL_GameController* findController();
 void onControllerAdded(SDL_Event event);
 
 void onControllerRemoved(SDL_Event event);
+
+void onControllerButtonDown(SDL_Event event);
+
+void onControllerHelpButtonPressed(SDL_Event event);
+
+void gameControllerSetCombatMenuOpen(bool open);
 
 void _gcontroller_handle_event();
 

@@ -16,16 +16,20 @@
 #include "draw.h"
 #include "elevator.h"
 #include "game.h"
+#include "game_controller.h"
 #include "game_mouse.h"
 #include "game_sound.h"
+#include "game_controller.h"
 #include "input.h"
 #include "interface.h"
+#include "inventory.h"
 #include "item.h"
 #include "kb.h"
 #include "loadsave.h"
 #include "map.h"
 #include "memory.h"
 #include "message.h"
+#include "mouse.h"
 #include "object.h"
 #include "party_member.h"
 #include "perk.h"
@@ -36,6 +40,7 @@
 #include "random.h"
 #include "scripts.h"
 #include "settings.h"
+#include "skilldex.h"
 #include "sfall_config.h"
 #include "sfall_global_scripts.h"
 #include "skill.h"
@@ -103,6 +108,7 @@ static int _compare_faster(const void* critter1Ptr, const void* critter2Ptr);
 static void _combat_sequence_init(Object* attacker, Object* defender);
 static void _combat_sequence();
 static void combatAttemptEnd();
+static int combatControllerOpenMenu();
 static int _combat_input();
 static void _combat_set_move_all();
 static int _combat_turn(Object* a1, bool a2);
@@ -1925,6 +1931,7 @@ static int _combat_elev;
 
 // 0x56D37C
 static int _list_total;
+static Object* gControllerCombatTarget;
 
 // Probably last who_hit_me of obj_dude
 //
@@ -3117,6 +3124,112 @@ static void combatAttemptEnd()
     _caiTeamCombatExit();
 }
 
+enum CombatControllerMenuResult {
+    COMBAT_CONTROLLER_MENU_NONE,
+    COMBAT_CONTROLLER_MENU_END_TURN,
+    COMBAT_CONTROLLER_MENU_END_COMBAT,
+    COMBAT_CONTROLLER_MENU_INVENTORY,
+    COMBAT_CONTROLLER_MENU_SKILLS,
+    COMBAT_CONTROLLER_MENU_ITEM_ACTION,
+};
+
+static void combatControllerMenuDraw(int window, int selected, const char** options, int optionsCount)
+{
+    constexpr int width = 360;
+    constexpr int height = 250;
+    constexpr int firstLineY = 42;
+    int lineHeight = fontGetLineHeight();
+
+    windowFill(window, 0, 0, width, height, _colorTable[0]);
+    windowDrawBorder(window);
+    windowDrawText(window, "COMBAT MENU", 0, 16, 12, _colorTable[32747]);
+
+    for (int index = 0; index < optionsCount; index++) {
+        int y = firstLineY + index * (lineHeight + 4);
+        int color = index == selected ? _colorTable[32747] : _colorTable[18979];
+        if (index == selected) {
+            windowDrawRect(window, 10, y - 2, width - 11, y + lineHeight + 1, _colorTable[32747]);
+        }
+        windowDrawText(window, options[index], 0, 20, y, color);
+    }
+
+    windowRefresh(window);
+}
+
+static int combatControllerOpenMenu()
+{
+    constexpr int width = 360;
+    constexpr int height = 250;
+    const char* options[] = {
+        "End turn",
+        "End combat",
+        "Open inventory",
+        "Open skills",
+        "Cycle item action",
+        "Back",
+    };
+    constexpr int optionsCount = sizeof(options) / sizeof(options[0]);
+
+    int windowX = (screenGetWidth() - width) / 2;
+    int windowY = (screenGetHeight() - height) / 2;
+    int window = windowCreate(windowX, windowY, width, height, _colorTable[0], WINDOW_MODAL | WINDOW_MOVE_ON_TOP);
+    if (window == -1) {
+        return COMBAT_CONTROLLER_MENU_NONE;
+    }
+
+    gameControllerSetCombatMenuOpen(true);
+    int selected = 0;
+    combatControllerMenuDraw(window, selected, options, optionsCount);
+
+    int result = COMBAT_CONTROLLER_MENU_NONE;
+    while (result == COMBAT_CONTROLLER_MENU_NONE) {
+        sharedFpsLimiter.mark();
+
+        int keyCode = inputGetInput();
+        if (keyCode == KEY_ARROW_UP) {
+            selected = selected == 0 ? optionsCount - 1 : selected - 1;
+            combatControllerMenuDraw(window, selected, options, optionsCount);
+        } else if (keyCode == KEY_ARROW_DOWN) {
+            selected = selected == optionsCount - 1 ? 0 : selected + 1;
+            combatControllerMenuDraw(window, selected, options, optionsCount);
+        } else if (keyCode == KEY_RETURN || keyCode == CONTROLLER_INPUT_COMBAT_CONFIRM) {
+            if (selected == 5) {
+                break;
+            }
+
+            switch (selected) {
+            case 0:
+                result = COMBAT_CONTROLLER_MENU_END_TURN;
+                break;
+            case 1:
+                result = COMBAT_CONTROLLER_MENU_END_COMBAT;
+                break;
+            case 2:
+                result = COMBAT_CONTROLLER_MENU_INVENTORY;
+                break;
+            case 3:
+                result = COMBAT_CONTROLLER_MENU_SKILLS;
+                break;
+            case 4:
+                result = COMBAT_CONTROLLER_MENU_ITEM_ACTION;
+                break;
+            default:
+                break;
+            }
+        } else if (keyCode == KEY_ESCAPE || keyCode == CONTROLLER_INPUT_COMBAT_MENU) {
+            result = COMBAT_CONTROLLER_MENU_NONE;
+            break;
+        }
+
+        renderPresent();
+        sharedFpsLimiter.throttle();
+    }
+
+    gameControllerSetCombatMenuOpen(false);
+    windowDestroy(window);
+    return result;
+}
+
 // 0x4227DC
 void _combat_turn_run()
 {
@@ -3155,6 +3268,40 @@ static int _combat_input()
         }
 
         int keyCode = inputGetInput();
+        _gcontroller_handle_event();
+
+        if (keyCode == CONTROLLER_INPUT_COMBAT_MENU) {
+            int menuResult = combatControllerOpenMenu();
+            switch (menuResult) {
+            case COMBAT_CONTROLLER_MENU_END_TURN:
+                combatAttemptEnd();
+                break;
+            case COMBAT_CONTROLLER_MENU_END_COMBAT:
+                gCombatState |= COMBAT_STATE_0x08;
+                _caiTeamCombatExit();
+                break;
+            case COMBAT_CONTROLLER_MENU_INVENTORY:
+                inventoryOpen();
+                break;
+            case COMBAT_CONTROLLER_MENU_SKILLS:
+                skilldexOpen();
+                break;
+            case COMBAT_CONTROLLER_MENU_ITEM_ACTION:
+                interfaceCycleItemAction();
+                break;
+            default:
+                break;
+            }
+            continue;
+        }
+
+        // Cross is handled as a virtual mouse click. It must not be treated
+        // as the keyboard Return/end-turn command in combat.
+        if (keyCode == CONTROLLER_INPUT_COMBAT_CONFIRM) {
+            renderPresent();
+            sharedFpsLimiter.throttle();
+            continue;
+        }
 
         // SFALL: CombatLoopHook.
         sfall_gl_scr_process_main();
@@ -5808,6 +5955,108 @@ void _combat_attack_this(Object* target)
     int hitLocation;
     if (calledShotSelectHitLocation(target, &hitLocation, hitMode) != -1) {
         _combat_attack(gDude, target, hitMode, hitLocation);
+    }
+}
+
+static bool combatControllerTargetIsValid(Object* critter)
+{
+    return critter != nullptr
+        && critter != gDude
+        && critter->elevation == gElevation
+        && critter->data.critter.combat.team != gDude->data.critter.combat.team
+        && (critter->data.critter.combat.results & DAM_DEAD) == 0;
+}
+
+void combatControllerMoveTarget(int dx, int dy)
+{
+    if (!isInCombat() || (dx == 0 && dy == 0) || _combat_list == nullptr) {
+        return;
+    }
+
+    int cursorX;
+    int cursorY;
+    mouseGetPosition(&cursorX, &cursorY);
+
+    Object* best = nullptr;
+    int bestScore = INT_MAX;
+    for (int index = 0; index < _list_total; index++) {
+        Object* critter = _combat_list[index];
+        if (!combatControllerTargetIsValid(critter)) {
+            continue;
+        }
+
+        int targetX;
+        int targetY;
+        if (tileToScreenXY(critter->tile, &targetX, &targetY, critter->elevation) != 0) {
+            continue;
+        }
+
+        int relativeX = targetX - cursorX;
+        int relativeY = targetY - cursorY;
+        int forward = relativeX * dx + relativeY * dy;
+        if (forward <= 0) {
+            continue;
+        }
+
+        int perpendicular = relativeX * dy - relativeY * dx;
+        if (perpendicular < 0) {
+            perpendicular = -perpendicular;
+        }
+
+        int score = perpendicular * 4 + forward;
+        if (score < bestScore) {
+            bestScore = score;
+            best = critter;
+        }
+    }
+
+    if (best != nullptr) {
+        int targetX;
+        int targetY;
+        if (tileToScreenXY(best->tile, &targetX, &targetY, best->elevation) == 0) {
+            gControllerCombatTarget = best;
+            gameMouseSetCursorPosition(targetX, targetY);
+        }
+    }
+}
+
+void combatControllerCycleTarget(int direction)
+{
+    if (!isInCombat() || _combat_list == nullptr || _list_total <= 0) {
+        return;
+    }
+
+    int current = -1;
+    for (int index = 0; index < _list_total; index++) {
+        if (_combat_list[index] == gControllerCombatTarget) {
+            current = index;
+            break;
+        }
+    }
+
+    if (direction == 0) {
+        direction = 1;
+    }
+
+    for (int offset = 1; offset <= _list_total; offset++) {
+        int index = current + direction * offset;
+        while (index < 0) {
+            index += _list_total;
+        }
+        index %= _list_total;
+
+        Object* critter = _combat_list[index];
+        if (!combatControllerTargetIsValid(critter)) {
+            continue;
+        }
+
+        int targetX;
+        int targetY;
+        if (tileToScreenXY(critter->tile, &targetX, &targetY, critter->elevation) == 0) {
+            gControllerCombatTarget = critter;
+            gameMouseSetCursorPosition(targetX, targetY);
+        }
+        break;
     }
 }
 

@@ -49,6 +49,8 @@ void _combat_anim_finished();
 int _combat_check_bad_shot(Object* attacker, Object* defender, int hitMode, bool aiming);
 bool _combat_to_hit(Object* target, int* accuracy);
 void _combat_attack_this(Object* target);
+void combatControllerMoveTarget(int dx, int dy);
+void combatControllerCycleTarget(int direction);
 void _combat_outline_on();
 void _combat_outline_off();
 void _combat_highlight_change();

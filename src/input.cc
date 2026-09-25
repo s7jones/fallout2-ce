@@ -7,6 +7,7 @@
 #include "delay.h"
 #include "dinput.h"
 #include "draw.h"
+#include "game_controller.h"
 #include "kb.h"
 #include "memory.h"
 #include "mouse.h"
@@ -925,6 +926,16 @@ void _GNW95_process_message()
             break;
         case SDL_FINGERUP:
             touch_handle_end(&(e.tfinger));
+            break;
+        case SDL_CONTROLLERDEVICEADDED:
+            onControllerAdded(e);
+            break;
+        case SDL_CONTROLLERDEVICEREMOVED:
+            onControllerRemoved(e);
+            break;
+        case SDL_CONTROLLERBUTTONDOWN:
+            onControllerHelpButtonPressed(e);
+            onControllerButtonDown(e);
             break;
         case SDL_KEYDOWN:
         case SDL_KEYUP:
